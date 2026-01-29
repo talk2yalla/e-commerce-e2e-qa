@@ -6,24 +6,34 @@ import org.testng.annotations.BeforeSuite;
 
 public class SuiteSetup {
 
-    @BeforeSuite(alwaysRun = true)
+    @org.testng.annotations.BeforeSuite(alwaysRun = true)
     public void setupSuite() {
-        String baseUrl = System.getProperty("baseUrl"); // allow override from CLI
 
+        // 1️⃣ Highest priority: CI / environment variable (GitHub Actions)
+        String baseUrl = System.getenv("BASE_URL");
+
+        // 2️⃣ Next priority: CLI override (-DbaseUrl=...)
         if (baseUrl == null || baseUrl.isBlank()) {
-            baseUrl = TestConfig.get("baseUrl"); // fallback to config.properties
+            baseUrl = System.getProperty("baseUrl");
         }
 
+        // 3️⃣ Fallback: config.properties
         if (baseUrl == null || baseUrl.isBlank()) {
-            throw new IllegalStateException("baseUrl is not set. Provide -DbaseUrl=... or set baseUrl in config.properties");
+            baseUrl = TestConfig.get("baseUrl");
+        }
+
+        // 4️⃣ Final safety check
+        if (baseUrl == null || baseUrl.isBlank()) {
+            throw new IllegalStateException(
+                    "baseUrl is not set. Provide BASE_URL env var, -DbaseUrl=..., or set baseUrl in config.properties"
+            );
         }
 
         RestAssured.baseURI = baseUrl;
 
-        // Optional: if you keep endpoints as "/api/v1/..."
-        // do NOT set basePath. If you want shorter endpoints, then set:
+        // Optional:
         // RestAssured.basePath = "/api/v1";
 
-        System.out.println("✅ RestAssured.baseURI = " + RestAssured.baseURI);
+        System.out.println("✅ RestAssured.baseURI set to: " + RestAssured.baseURI);
     }
 }

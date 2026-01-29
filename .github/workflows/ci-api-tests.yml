@@ -1,0 +1,111 @@
+name: API Tests CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+
+jobs:
+  api-e2e:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: ecom_db
+          MYSQL_USER: ecom_user
+          MYSQL_PASSWORD: Ecom@1234
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=20
+
+    steps:
+      - name: Checkout QA repo
+        uses: actions/checkout@v4
+
+      - name: Checkout Backend repo
+        uses: actions/checkout@v4
+        with:
+          repository: talk2yalla/e-commerce-e2e-backend
+          ref: main
+          path: backend
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Wait for MySQL
+        run: |
+          for i in {1..30}; do
+            if mysqladmin ping -h 127.0.0.1 -uroot -proot --silent; then
+              echo "MySQL is ready!"
+              exit 0
+            fi
+            echo "Waiting for MySQL..."
+            sleep 2
+          done
+          echo "MySQL did not become ready in time"
+          exit 1
+
+      - name: Build backend
+        working-directory: backend
+        run: mvn -q -DskipTests clean package
+
+      - name: Start backend (background)
+        working-directory: backend
+        env:
+          SPRING_DATASOURCE_URL: jdbc:mysql://127.0.0.1:3306/ecom_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+          SPRING_DATASOURCE_USERNAME: ecom_user
+          SPRING_DATASOURCE_PASSWORD: Ecom@1234
+          SPRING_JPA_SHOW_SQL: "false"
+        run: |
+          nohup mvn -q spring-boot:run > app.log 2>&1 &
+          echo "Started backend..."
+
+      - name: Wait for backend health
+        run: |
+          for i in {1..60}; do
+            if curl -fsS http://localhost:8080/actuator/health > /dev/null; then
+              echo "Backend is healthy!"
+              exit 0
+            fi
+            echo "Waiting for backend..."
+            sleep 2
+          done
+          echo "Backend did not become healthy in time."
+          echo "---- backend/app.log ----"
+          tail -n 200 backend/app.log || true
+          exit 1
+
+      - name: Run Rest Assured TestNG suite
+        env:
+          BASE_URL: http://localhost:8080
+          DB_URL: jdbc:mysql://127.0.0.1:3306/ecom_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+          DB_USERNAME: ecom_user
+          DB_PASSWORD: Ecom@1234
+        run: mvn -q test -Dsurefire.suiteXmlFiles=testng.xml
+
+      - name: Upload QA test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-test-reports
+          path: |
+            target/surefire-reports
+            test-output
+
+      - name: Upload backend logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-logs
+          path: backend/app.log
